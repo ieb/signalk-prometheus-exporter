@@ -26,14 +26,18 @@ module.exports = function (app) {
   let shouldStore = function (path) {
     return true
   }
+  let lfMetric = function (path) {
+    return false
+  }
 
   function toPromKey(v) {
     return v.replace(/-|\./g,"_");
   }
 
-  function toMetrics(store) {
+  function toMetrics(store, lf) {
       var r = ""
       for (var v in store) {
+        if (lfMetric(v) != lf) { continue };
         var k = toPromKey(v);
         r = r + "# HELP "+k+" "+v+"\n";
         r = r + "# TYPE "+k+" gauge\n";
@@ -104,10 +108,39 @@ module.exports = function (app) {
             type: 'string',
             title: 'Path'
           }
+        },
+        lowFrequencyMetrics: {
+          type: 'array',
+          title: 'Any SignalK metric matching any of these RegExps will be published on /lf',
+          type: 'array',
+          items: {
+            type: 'string',
+            title: 'Regex'
+           }
         }
-      }
+       }
     },
     start: function (options) {
+      {
+        // Set up Low Frequency filter
+        var lf = []
+        options.lowFrequencyMetrics.forEach(element => {
+          try {
+            lf.push(new RegExp(element));
+          } catch (err) {
+            console.error("Cannot use '" + element + "' for a regular expression", err);
+          };
+        });
+
+        lfMetric = function (name) {
+          for (const r of lf) {
+            if (r.test(name)) {
+              return true;
+	    }
+	  };
+          return false;
+        }
+      }
       if (
         typeof options.blackOrWhitelist !== 'undefined' &&
         typeof options.blackOrWhite !== 'undefined' &&
@@ -144,9 +177,14 @@ module.exports = function (app) {
     signalKApiRoutes: function (router) {
       const metricsHandler = function(req, res, next) {
         res.type("text/plain; version=0.0.4; charset=utf-8");
-        res.send(toMetrics(store));
+        res.send(toMetrics(store, false));
       }
       router.get('/prometheus', metricsHandler);
+      const metricsHandlerLF = function(req, res, next) {
+        res.type("text/plain; version=0.0.4; charset=utf-8");
+        res.send(toMetrics(store, true));
+      }
+      router.get('/prometheus/lf', metricsHandlerLF);
       console.log("Registered metrics end point ", router );
       return router;
     }
